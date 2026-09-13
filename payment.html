@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>InspectionPro - Secure Payment | CreativeTech4U</title>
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Arial, sans-serif;
+      background: linear-gradient(135deg, #eff6ff, #f8fafc);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      color: #0f172a;
+    }
+    .card {
+      width: min(460px, 100%);
+      background: #fff;
+      border-radius: 20px;
+      padding: 34px;
+      box-shadow: 0 12px 40px rgba(15, 23, 42, .12);
+      text-align: center;
+    }
+    .brand { font-size: 14px; font-weight: 700; color: #2563eb; letter-spacing: .5px; }
+    h1 { margin: 10px 0 6px; font-size: 27px; }
+    .sub { color: #64748b; margin-bottom: 25px; }
+    .plan { font-size: 20px; font-weight: 700; margin: 10px 0; }
+    .pc { color: #475569; margin-bottom: 15px; }
+    .price { font-size: 38px; font-weight: 800; margin: 15px 0 25px; }
+    button {
+      width: 100%; border: 0; border-radius: 10px; padding: 15px;
+      background: #2563eb; color: #fff; font-size: 17px; font-weight: 700;
+      cursor: pointer;
+    }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+    #status { margin-top: 18px; min-height: 22px; font-weight: 600; color: #475569; }
+    .small { margin-top: 22px; font-size: 12px; color: #94a3b8; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand">CREATIVETECH4U</div>
+    <h1>InspectionPro</h1>
+    <div class="sub">Secure license activation</div>
+
+    <div id="plan" class="plan">Loading...</div>
+    <div id="pc" class="pc"></div>
+    <div id="price" class="price"></div>
+
+    <button id="payButton" disabled>Loading Payment...</button>
+    <div id="status">Preparing secure payment...</div>
+    <div class="small">Payments are processed securely by Razorpay.</div>
+  </div>
+
+<script>
+  // Apps Script backend URL. Razorpay Checkout itself is opened from
+  // www.creativetech4u.in, which is the approved website in Razorpay.
+  const API_URL = "https://script.google.com/macros/s/AKfycbxPUwu27DhnNBWluLEf3iTuXuu2cJL0K6el9yGqqJIFB2c7xFU83uDMBqo6RNpHBEr6ug/exec";
+
+  const requestId = new URLSearchParams(window.location.search).get("requestId") || "";
+  const planEl = document.getElementById("plan");
+  const pcEl = document.getElementById("pc");
+  const priceEl = document.getElementById("price");
+  const statusEl = document.getElementById("status");
+  const payButton = document.getElementById("payButton");
+
+  let paymentData = null;
+
+  function setStatus(text, ok) {
+    statusEl.textContent = text;
+    statusEl.style.color = ok ? "#15803d" : "#475569";
+  }
+
+  function loadPaymentData() {
+    if (!requestId) {
+      setStatus("Invalid payment request.", false);
+      return;
+    }
+
+    const callbackName = "paymentApiCallback_" + Date.now();
+    const script = document.createElement("script");
+
+    window[callbackName] = function(result) {
+      try {
+        if (!result || !result.success) {
+          setStatus(result?.message || "Unable to load payment details.", false);
+          return;
+        }
+
+        if (result.alreadyPaid) {
+          setStatus("This payment request is already completed. You can return to InspectionPro.", true);
+          return;
+        }
+
+        paymentData = result;
+        planEl.textContent = result.plan || "InspectionPro License";
+        pcEl.textContent = `${result.maxPCs || 1} PC License`;
+        priceEl.textContent = "₹" + Number(result.amount || 0).toLocaleString("en-IN");
+        payButton.disabled = false;
+        payButton.textContent = "Pay Securely";
+        setStatus("Ready for secure payment.", false);
+      } finally {
+        delete window[callbackName];
+        script.remove();
+      }
+    };
+
+    script.onerror = function() {
+      setStatus("Unable to connect to the licensing server. Please try again.", false);
+      delete window[callbackName];
+      script.remove();
+    };
+
+    script.src = API_URL +
+      "?action=GET_PAYMENT&requestId=" + encodeURIComponent(requestId) +
+      "&callback=" + encodeURIComponent(callbackName);
+
+    document.body.appendChild(script);
+  }
+
+  function startPayment() {
+    if (!paymentData) return;
+
+    payButton.disabled = true;
+    payButton.textContent = "Opening Razorpay...";
+    setStatus("Opening secure Razorpay Checkout...", false);
+
+    const options = {
+      key: paymentData.razorpayKeyId,
+      amount: Math.round(Number(paymentData.amount) * 100),
+      currency: paymentData.currency || "INR",
+      name: "CreativeTech4U",
+      description: paymentData.plan || "InspectionPro License",
+      order_id: paymentData.razorpayOrderId,
+      theme: { color: "#2563eb" },
+      handler: function(response) {
+        setStatus("Payment received. Verifying securely...", false);
+
+        // Navigate to Apps Script only AFTER Razorpay has returned a
+        // successful payment. The verification happens server-side.
+        const verifyUrl = API_URL +
+          "?action=VERIFY_RAZORPAY_PAYMENT" +
+          "&requestId=" + encodeURIComponent(requestId) +
+          "&razorpayOrderId=" + encodeURIComponent(response.razorpay_order_id || "") +
+          "&razorpayPaymentId=" + encodeURIComponent(response.razorpay_payment_id || "") +
+          "&razorpaySignature=" + encodeURIComponent(response.razorpay_signature || "");
+
+        window.location.href = verifyUrl;
+      },
+      modal: {
+        ondismiss: function() {
+          payButton.disabled = false;
+          payButton.textContent = "Pay Securely";
+          setStatus("Payment window closed. You can try again.", false);
+        }
+      }
+    };
+
+    const razorpay = new Razorpay(options);
+
+    razorpay.on("payment.failed", function(response) {
+      payButton.disabled = false;
+      payButton.textContent = "Pay Securely";
+      const reason = response?.error?.description || "Payment failed.";
+      setStatus(reason, false);
+    });
+
+    razorpay.open();
+  }
+
+  payButton.addEventListener("click", startPayment);
+  loadPaymentData();
+</script>
+</body>
+</html>
